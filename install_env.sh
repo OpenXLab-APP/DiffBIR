@@ -1,4 +1,11 @@
 python -m pip install --upgrade pip
+
+python gradio_diffbir.py \
+--ckpt weights/general_full_v1.ckpt \
+--config configs/model/cldm.yaml \
+--reload_swinir \
+--swinir_ckpt weights/general_swinir_v1.ckpt
+
 pip install pytorch_lightning==1.4.2
 pip install einops
 conda install transformers
