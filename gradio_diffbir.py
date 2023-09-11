@@ -1,3 +1,4 @@
+os.system(install_env.sh)
 from typing import List
 import math
 from argparse import ArgumentParser
