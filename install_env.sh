@@ -1,4 +1,4 @@
-python -m pip install --upgrade
+python -m pip install --upgrade pip
 pip install pytorch_lightning==1.4.2
 pip install einops
 conda install transformers
