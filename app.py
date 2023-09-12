@@ -1,6 +1,5 @@
 import os
-os.system("sh install_env.sh")
-from typing import List
+from typing import List, Tuple
 import math
 from argparse import ArgumentParser
 
@@ -11,6 +10,7 @@ import pytorch_lightning as pl
 import gradio as gr
 from PIL import Image
 from omegaconf import OmegaConf
+from openxlab.model import download
 
 from model.spaced_sampler import SpacedSampler
 from model.cldm import ControlLDM
@@ -20,30 +20,33 @@ from utils.image import (
 from utils.common import instantiate_from_config, load_state_dict
 
 
-parser = ArgumentParser()
-parser.add_argument("--config", required=True, type=str)
-parser.add_argument("--ckpt", type=str, required=True)
-parser.add_argument("--reload_swinir", action="store_true")
-parser.add_argument("--swinir_ckpt", type=str, default="")
-args = parser.parse_args()
+# download models to local directory
+download(model_repo="linxinqi/DiffBIR", model_name="diffbir_general_full_v1")
+download(model_repo="linxinqi/DiffBIR", model_name="diffbir_general_swinir_v1")
+download(model_repo="linxinqi/DiffBIR", model_name="diffbir_face_full_v1")
 
-# load model
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model: ControlLDM = instantiate_from_config(OmegaConf.load(args.config))
-load_state_dict(model, torch.load(args.ckpt, map_location="cpu"), strict=True)
-# reload preprocess model if specified
-if args.reload_swinir:
-    print(f"reload swinir model from {args.swinir_ckpt}")
-    load_state_dict(model.preprocess_model, torch.load(args.swinir_ckpt, map_location="cpu"), strict=True)
-model.freeze()
-model.to(device)
-# load sampler
-sampler = SpacedSampler(model, var_type="fixed_small")
+config = "cldm.yaml"
+general_full_ckpt = "general_full_v1.ckpt"
+general_swinir_ckpt = "general_swinir_v1.ckpt"
+face_full_ckpt = "face_full_v1.ckpt"
 
+# create general model
+general_model: ControlLDM = instantiate_from_config(OmegaConf.load(config)).cuda()
+load_state_dict(general_model, torch.load(general_full_ckpt, map_location="cuda"), strict=True)
+load_state_dict(general_model.preprocess_model, torch.load(general_swinir_ckpt, map_location="cuda"), strict=True)
+general_model.freeze()
+
+# create face model (load to cpu)
+face_model: ControlLDM = instantiate_from_config(OmegaConf.load(config))
+load_state_dict(face_model, torch.load(face_full_ckpt, map_location="cpu"), strict=True)
+face_model.freeze()
+
+is_face_model = False
 
 @torch.no_grad()
 def process(
     control_img: Image.Image,
+    use_face_model: bool,
     num_samples: int,
     sr_scale: int,
     image_size: int,
@@ -57,16 +60,27 @@ def process(
     keep_original_size: bool,
     seed: int
 ) -> List[np.ndarray]:
-    print(
-        f"control image shape={control_img.size}\n"
-        f"num_samples={num_samples}, sr_scale={sr_scale}, image_size={image_size}\n"
-        f"disable_preprocess_model={disable_preprocess_model}, strength={strength}\n"
-        f"positive_prompt='{positive_prompt}', negative_prompt='{negative_prompt}'\n"
-        f"prompt scale={cond_scale}, steps={steps}, use_color_fix={use_color_fix}\n"
-        f"seed={seed}"
-    )
     pl.seed_everything(seed)
-
+    
+    global is_face_model
+    global general_model
+    global face_model
+    if use_face_model:
+        if not is_face_model:
+            # general model is staying in GPU
+            general_model.cpu()
+            face_model.cuda()
+            is_face_model = True
+        model = face_model
+    else:
+        if is_face_model:
+            # face model is staying in GPU
+            general_model.cuda()
+            face_model.cpu()
+            is_face_model = False
+        model = general_model
+    sampler = SpacedSampler(model, var_type="fixed_small")
+    
     # prepare condition
     if sr_scale != 1:
         control_img = control_img.resize(
@@ -94,7 +108,6 @@ def process(
     model.control_scales = [strength] * 13
     
     shape = (num_samples, 4, height // 8, width // 8)
-    print(f"latent shape = {shape}")
     x_T = torch.randn(shape, device=model.device, dtype=torch.float32)
     samples = sampler.sample(
         steps, shape, cond,
@@ -121,7 +134,6 @@ def process(
             preds.append(img[:h, :w, :])
     return preds
 
-
 block = gr.Blocks().queue()
 with block:
     with gr.Row():
@@ -131,16 +143,11 @@ with block:
             input_image = gr.Image(source="upload", type="pil")
             run_button = gr.Button(label="Run")
             with gr.Accordion("Options", open=True):
+                use_face_model = gr.Checkbox(label="Use Face Model", value=True)
                 num_samples = gr.Slider(label="Images", minimum=1, maximum=12, value=1, step=1)
                 sr_scale = gr.Number(label="SR Scale", value=1)
-                image_size = gr.Slider(label="Image size", minimum=256, maximum=768, value=512, step=64)
+                image_size = gr.Slider(label="Image Size", minimum=256, maximum=768, value=512, step=64)
                 positive_prompt = gr.Textbox(label="Positive Prompt", value="")
-                # It's worth noting that if your positive prompt is short while the negative prompt 
-                # is long, the positive prompt will lose its effectiveness.
-                # Example (control strength = 0):
-                # positive prompt: cat
-                # negative prompt: longbody, lowres, bad anatomy, bad hands, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality
-                # I take some experiments and find that sd_v2.1 will suffer from this problem while sd_v1.5 won't.
                 negative_prompt = gr.Textbox(
                     label="Negative Prompt",
                     value="longbody, lowres, bad anatomy, bad hands, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality"
@@ -156,6 +163,7 @@ with block:
             result_gallery = gr.Gallery(label="Output", show_label=False, elem_id="gallery").style(grid=2, height="auto")
     inputs = [
         input_image,
+        use_face_model,
         num_samples,
         sr_scale,
         image_size,
@@ -171,4 +179,4 @@ with block:
     ]
     run_button.click(fn=process, inputs=inputs, outputs=[result_gallery])
 
-block.launch(server_name='0.0.0.0')
+block.launch()
