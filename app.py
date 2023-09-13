@@ -1,7 +1,5 @@
-import os
-from typing import List, Tuple
+from typing import List
 import math
-from argparse import ArgumentParser
 
 import numpy as np
 import torch
@@ -67,6 +65,7 @@ def process(
     global face_model
     if use_face_model:
         if not is_face_model:
+            print(f"change to face model")
             # general model is staying in GPU
             general_model.cpu()
             face_model.cuda()
@@ -74,6 +73,7 @@ def process(
         model = face_model
     else:
         if is_face_model:
+            print(f"change to general model")
             # face model is staying in GPU
             general_model.cuda()
             face_model.cpu()
@@ -143,7 +143,7 @@ with block:
             input_image = gr.Image(source="upload", type="pil")
             run_button = gr.Button(label="Run")
             with gr.Accordion("Options", open=True):
-                use_face_model = gr.Checkbox(label="Use Face Model", value=True)
+                use_face_model = gr.Checkbox(label="Use Face Model", value=False)
                 num_samples = gr.Slider(label="Images", minimum=1, maximum=12, value=1, step=1)
                 sr_scale = gr.Number(label="SR Scale", value=1)
                 image_size = gr.Slider(label="Image Size", minimum=256, maximum=768, value=512, step=64)
