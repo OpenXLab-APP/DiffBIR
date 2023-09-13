@@ -152,7 +152,7 @@ with block:
                     label="Negative Prompt",
                     value="longbody, lowres, bad anatomy, bad hands, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality"
                 )
-                cond_scale = gr.Slider(label="Prompt Guidance Scale", minimum=0.1, maximum=30.0, value=1.0, step=0.1)
+                cond_scale = gr.Slider(label="Prompt Guidance Scale (Set to a value larger than 1 to enable the negative prompt!)", minimum=0.1, maximum=30.0, value=1.0, step=0.1)
                 strength = gr.Slider(label="Control Strength", minimum=0.0, maximum=2.0, value=1.0, step=0.01)
                 steps = gr.Slider(label="Steps", minimum=1, maximum=100, value=50, step=1)
                 disable_preprocess_model = gr.Checkbox(label="Disable Preprocess Model", value=False)
