@@ -448,6 +448,8 @@ class SpacedSampler:
                 noise_buffer[:, :, hi:hi_end, wi:wi_end] += tile_noise
                 count[:, :, hi:hi_end, wi:wi_end] += 1
             
+            if (count == 0).any().item():
+                print(f"find count == 0!")
             # average on noise
             noise_buffer.div_(count)
             # sample previous latent
