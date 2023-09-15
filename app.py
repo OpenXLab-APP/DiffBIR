@@ -113,35 +113,30 @@ def process(
     model.control_scales = [strength] * 13
     
     preds = []
-    error_msg = ""
     for _ in tqdm(range(num_samples)):
         shape = (1, 4, height // 8, width // 8)
         x_T = torch.randn(shape, device=model.device, dtype=torch.float32)
-        try:
-            if not tiled:
-                samples = sampler.sample(
-                    steps=steps, shape=shape, cond_img=control,
-                    positive_prompt=positive_prompt, negative_prompt=negative_prompt, x_T=x_T,
-                    cfg_scale=cfg_scale, cond_fn=None,
-                    color_fix_type="wavelet" if use_color_fix else "none"
-                )
-            else:
-                samples = sampler.sample_with_mixdiff(
-                    tile_size=int(tile_size), tile_stride=int(tile_stride),
-                    steps=steps, shape=shape, cond_img=control,
-                    positive_prompt=positive_prompt, negative_prompt=negative_prompt, x_T=x_T,
-                    cfg_scale=cfg_scale, cond_fn=None,
-                    color_fix_type="wavelet" if use_color_fix else "none"
-                )
-        except BaseException as e:
-            error_msg += f"sample {_}: {str(e)}\n"
-            samples = torch.zeros((1, 3, height, width), dtype=torch.float32, device=control.device)
+        if not tiled:
+            samples = sampler.sample(
+                steps=steps, shape=shape, cond_img=control,
+                positive_prompt=positive_prompt, negative_prompt=negative_prompt, x_T=x_T,
+                cfg_scale=cfg_scale, cond_fn=None,
+                color_fix_type="wavelet" if use_color_fix else "none"
+            )
+        else:
+            samples = sampler.sample_with_mixdiff(
+                tile_size=int(tile_size), tile_stride=int(tile_stride),
+                steps=steps, shape=shape, cond_img=control,
+                positive_prompt=positive_prompt, negative_prompt=negative_prompt, x_T=x_T,
+                cfg_scale=cfg_scale, cond_fn=None,
+                color_fix_type="wavelet" if use_color_fix else "none"
+            )
         x_samples = samples.clamp(0, 1)
         x_samples = (einops.rearrange(x_samples, "b c h w -> b h w c") * 255).cpu().numpy().clip(0, 255).astype(np.uint8)
         # remove padding and resize to input size
         img = Image.fromarray(x_samples[0, :h, :w, :]).resize(input_size, Image.LANCZOS)
         preds.append(np.array(img))
-    return preds, error_msg
+    return preds
 
 MAX_SIZE = int(os.getenv("MAX_SIZE"))
 CONCURRENCY_COUNT = int(os.getenv("CONCURRENCY_COUNT"))
@@ -184,7 +179,6 @@ with block:
                 use_color_fix = gr.Checkbox(label="Use Color Correction", value=True)
                 seed = gr.Slider(label="Seed", minimum=-1, maximum=2147483647, step=1, value=231)
         with gr.Column():
-            error_msg = gr.Textbox(label="Error Message")
             result_gallery = gr.Gallery(label="Output", show_label=False, elem_id="gallery").style(height="auto", grid=2)
             # gr.Markdown("## Image Examples")
             gr.Examples(
@@ -213,9 +207,9 @@ with block:
                     tile_size,
                     tile_stride
                 ],
-                outputs=[result_gallery, error_msg],
+                outputs=[result_gallery],
                 fn=process,
-                cache_examples=True,
+                cache_examples=False,
             )
     
     inputs = [
@@ -235,6 +229,6 @@ with block:
         tile_size,
         tile_stride
     ]
-    run_button.click(fn=process, inputs=inputs, outputs=[result_gallery, error_msg])
+    run_button.click(fn=process, inputs=inputs, outputs=[result_gallery])
 
 block.launch()
