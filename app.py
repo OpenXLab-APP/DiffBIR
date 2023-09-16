@@ -209,7 +209,7 @@ with block:
                 ],
                 outputs=[result_gallery],
                 fn=process,
-                cache_examples=False,
+                cache_examples=True,
             )
     
     inputs = [
