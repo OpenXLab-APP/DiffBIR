@@ -150,6 +150,11 @@ MARKDOWN = \
 [GitHub](https://github.com/XPixelGroup/DiffBIR) | [Paper](https://arxiv.org/abs/2308.15070) | [Project Page](https://0x3f3f3f3fun.github.io/projects/diffbir/)
 
 If DiffBIR is helpful for you, please help star the GitHub Repo. Thanks!
+
+## NOTE
+
+1. This app processes user-uploaded images in sequence, so it may take some time before your image begins to be processed.
+2. This is a publicly-used app, so please don't upload large images (>= 1024) to avoid taking up too much time.
 """
 
 block = gr.Blocks().queue(concurrency_count=CONCURRENCY_COUNT, max_size=MAX_SIZE)
@@ -188,7 +193,7 @@ with block:
                     ["examples/general/14.jpg", False, 1, 4, False, 1.0, "", "", 1.0, 50, True, 231, False, 512, 256],
                     ["examples/general/49.jpg", False, 1, 4, False, 1.0, "", "", 1.0, 50, True, 231, False, 512, 256],
                     ["examples/general/53.jpeg", False, 1, 4, False, 1.0, "", "", 1.0, 50, True, 231, False, 512, 256],
-                    ["examples/general/bx2vqrcj.png", False, 1, 4, False, 1.0, "", "", 1.0, 50, True, 231, True, 512, 256],
+                    # ["examples/general/bx2vqrcj.png", False, 1, 4, False, 1.0, "", "", 1.0, 50, True, 231, True, 512, 256],
                 ],
                 inputs=[
                     input_image,
