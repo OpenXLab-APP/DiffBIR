@@ -16,6 +16,7 @@ from model.spaced_sampler import SpacedSampler
 from model.cldm import ControlLDM
 from utils.image import auto_resize, pad
 from utils.common import instantiate_from_config, load_state_dict
+from utils.face_restoration_helper import FaceRestoreHelper
 
 
 # download models to local directory
@@ -58,6 +59,17 @@ del _tmp
 
 face_model.cuda()
 
+def to_tensor(image, device, bgr2rgb=False):
+    if bgr2rgb:
+        image = image[:, :, ::-1]
+    image_tensor = torch.tensor(image[None] / 255.0, dtype=torch.float32, device=device).clamp_(0, 1)
+    image_tensor = einops.rearrange(image_tensor, "n h w c -> n c h w").contiguous()
+    return image_tensor
+
+def to_array(image):
+    image = image.clamp(0, 1)
+    image_array = (einops.rearrange(image, "b c h w -> b h w c") * 255).cpu().numpy().clip(0, 255).astype(np.uint8)
+    return image_array
 
 @torch.no_grad()
 def process(
@@ -75,22 +87,21 @@ def process(
     seed: int,
     tiled: bool,
     tile_size: int,
-    tile_stride: int,
-    progress = gr.Progress(track_tqdm=True)
+    tile_stride: int
+    # progress = gr.Progress(track_tqdm=True)
 ) -> List[np.ndarray]:
     pl.seed_everything(seed)
     
     global general_model
     global face_model
     
+    model = general_model
+    sampler = SpacedSampler(model, var_type="fixed_small")
+    model.control_scales = [strength] * 13
     if use_face_model:
         print("use face model")
-        model = face_model
-    else:
-        print("use general model")
-        model = general_model
-    
-    sampler = SpacedSampler(model, var_type="fixed_small")
+        sampler_face = SpacedSampler(face_model, var_type="fixed_small")
+        face_model.control_scales = [strength] * 13
     
     # prepare condition
     if sr_scale != 1:
@@ -105,12 +116,21 @@ def process(
         control_img = auto_resize(control_img, tile_size)
     h, w = control_img.height, control_img.width
     control_img = pad(np.array(control_img), scale=64) # HWC, RGB, [0, 255]
-    control = torch.tensor(control_img[None] / 255.0, dtype=torch.float32, device=model.device).clamp_(0, 1)
-    control = einops.rearrange(control, "n h w c -> n c h w").contiguous()
+
+    if use_face_model:
+        # set up FaceRestoreHelper
+        face_size = 512
+        face_helper = FaceRestoreHelper(device=model.device, upscale_factor=1, face_size=face_size, use_parse=True)
+        # read BGR numpy [0, 255]
+        face_helper.read_image(np.array(control_img)[:, :, ::-1])
+        # detect faces in input lq control image
+        face_helper.get_face_landmarks_5(only_center_face=False, resize=640, eye_dist_threshold=5)
+        face_helper.align_warp_face()
+
+    control = to_tensor(control_img, device=model.device)
     if not disable_preprocess_model:
         control = model.preprocess_model(control)
     height, width = control.size(-2), control.size(-1)
-    model.control_scales = [strength] * 13
     
     preds = []
     for _ in tqdm(range(num_samples)):
@@ -131,11 +151,33 @@ def process(
                 cfg_scale=cfg_scale, cond_fn=None,
                 color_fix_type="wavelet" if use_color_fix else "none"
             )
-        x_samples = samples.clamp(0, 1)
-        x_samples = (einops.rearrange(x_samples, "b c h w -> b h w c") * 255).cpu().numpy().clip(0, 255).astype(np.uint8)
+        restored_bg = to_array(samples)
+
+        if use_face_model and len(face_helper.cropped_faces) > 0:
+            shape_face = (1, 4, face_size // 8, face_size // 8)
+            x_T_face = torch.randn(shape_face, device=model.device, dtype=torch.float32)
+            # face detected
+            for cropped_face in face_helper.cropped_faces:
+                cropped_face = to_tensor(cropped_face, device=model.device, bgr2rgb=True)
+                if not disable_preprocess_model:
+                    cropped_face = face_model.preprocess_model(cropped_face)
+                samples_face = sampler_face.sample(
+                    steps=steps, shape=shape, cond_img=cropped_face,
+                    positive_prompt=positive_prompt, negative_prompt=negative_prompt, x_T=x_T_face,
+                    cfg_scale=1.0, cond_fn=None,
+                    color_fix_type="wavelet" if use_color_fix else "none"
+                )
+                restored_face = to_array(samples_face)
+                face_helper.add_restored_face(restored_face[0])
+            face_helper.get_inverse_affine(None)
+            # paste each restored face to the input image
+            restored_img = face_helper.paste_faces_to_input_image(
+                upsample_img=restored_bg[0]
+            )
+
         # remove padding and resize to input size
-        img = Image.fromarray(x_samples[0, :h, :w, :]).resize(input_size, Image.LANCZOS)
-        preds.append(np.array(img))
+        restored_img = Image.fromarray(restored_img[:h, :w, :]).resize(input_size, Image.LANCZOS)
+        preds.append(np.array(restored_img))
     return preds
 
 MAX_SIZE = int(os.getenv("MAX_SIZE"))
