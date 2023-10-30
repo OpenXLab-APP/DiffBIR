@@ -7,3 +7,5 @@ __pycache__
 !install_env.sh
 /weights
 /temp
+/gradio_cached_examples
+/flagged
